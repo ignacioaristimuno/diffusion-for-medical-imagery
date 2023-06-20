@@ -1,5 +1,4 @@
 from diffusers import StableDiffusionPipeline, EulerDiscreteScheduler
-from PIL import Image
 import os
 import torch
 
@@ -19,8 +18,7 @@ class StableDiffusionModel(BaseDiffusionModel):
         self.pipe = StableDiffusionPipeline.from_pretrained(
             self.model_id, scheduler=scheduler, torch_dtype=torch.float16
         )
-        max_split_size_mb = 10
-        torch.cuda.set_memory_splitting(max_split_size_mb)
+        self.pipe.enable_xformers_memory_efficient_attention()
 
     def generate_images(
         self,
@@ -47,7 +45,8 @@ class StableDiffusionModel(BaseDiffusionModel):
         if negative_prompt:
             configs["negative_prompt"] = negative_prompt
 
-        images = self.pipe(**configs).images
+        with torch.inference_mode():
+            images = self.pipe(**configs).images
 
         if save:
             base_path = f"{self.BASE_IMAGES_FOLDER}/{self.__class__.__name__}/{label}"
