@@ -1,0 +1,1 @@
+from textual_inversion.textual_inversion import TextualInversionTrainer
