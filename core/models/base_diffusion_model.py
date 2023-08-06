@@ -1,10 +1,10 @@
-from abc import ABCMeta, abstractmethod
+from abc import ABC, abstractmethod
 import torch
 
 from core.settings.logger import custom_logger
 
 
-class BaseDiffusionModel(ABCMeta):
+class BaseDiffusionModel(ABC):
     """
     Class for centralizing the main methods for the collection of
     Diffusion Models

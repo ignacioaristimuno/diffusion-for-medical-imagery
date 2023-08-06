@@ -10,9 +10,9 @@ class StableDiffusionWithTextualInversion(BaseDiffusionModel):
     """Class for loading and using the Stable Diffusion model with Textual Inversion"""
 
     def __init__(self, concept_name: str) -> None:
+        self.model_path = get_config("TextualInversion")["output_dir"]
         super().__init__(self.__class__.__name__)
         self.concept_name = concept_name
-        self.model_path = get_config("TextualInversion")["output_dir"]
 
     def load_model(self) -> None:
         """Method to load the specified pipeline from the pretrained model"""
@@ -53,3 +53,5 @@ class StableDiffusionWithTextualInversion(BaseDiffusionModel):
 
         if show_grid:
             show_image_grid(all_images, n_rows, n_images)
+
+        return all_images
