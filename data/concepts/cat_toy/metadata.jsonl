@@ -1,4 +1,4 @@
-{"file_name": "0.jpeg", "text": "A picture of a cat toy in a sofa"}
-{"file_name": "1.jpeg", "text": "A picture of a cat toy in the floor"}
-{"file_name": "2.jpeg", "text": "A picture of a cat toy in a chair"}
-{"file_name": "3.jpeg", "text": "A picture of a cat toy in a bed"}
+{"file_name": "0.jpeg", "text": "A picture of a <cat-toy> in a sofa"}
+{"file_name": "1.jpeg", "text": "A picture of a <cat-toy> in the floor"}
+{"file_name": "2.jpeg", "text": "A picture of a <cat-toy> in a chair"}
+{"file_name": "3.jpeg", "text": "A picture of a <cat-toy> in a bed"}

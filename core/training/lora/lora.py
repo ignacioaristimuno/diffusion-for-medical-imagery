@@ -43,6 +43,9 @@ class LoRATrainer:
         self.logger = custom_logger(self.__class__.__name__)
         self.concept_name = concept_name
         self.hyperparameters = get_config(key="LoRA")
+        self.logger.info(
+            f"""Running {self.__class__.__name__} for the concept {concept_name} with hyperparameters: {self.hyperparameters}"""
+        )
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         self.logger.info(f"Using {device.upper()} as device!")
@@ -199,7 +202,7 @@ class LoRATrainer:
             self._run_validation_steps(accelerator, epoch, weight_dtype)
 
         # Save LoRA layers
-        self._save_lora_layers()
+        self._save_lora_layers(accelerator)
 
     def _set_lora_layers(self):
         """Method for setting the LoRA layers within the U-Net"""
@@ -251,6 +254,7 @@ class LoRATrainer:
     ) -> DataLoader:
         """Function for loading the concept's dataset from the data directory"""
 
+        self.logger.info(f"Loading dataset from {data_dir}")
         data_files = {"train": os.path.join(data_dir, "**")}
         train_dataset = load_dataset(
             "imagefolder",
@@ -258,12 +262,16 @@ class LoRATrainer:
         )
 
         # Preprocess dataset
+        self.logger.info("Preprocessing dataset...")
         with accelerator.main_process_first():
             train_dataset = train_dataset["train"].with_transform(
                 self._preprocess_dataset
             )
 
         # DataLoaders creation:
+        self.logger.info(
+            f"Loading dataset in DataLoader with batch size of {self.hyperparameters['batch_size']}"
+        )
         train_dataloader = torch.utils.data.DataLoader(
             train_dataset,
             shuffle=True,
@@ -295,88 +303,37 @@ class LoRATrainer:
         )
         return inputs.input_ids
 
-    def _preprocess_dataset(self, examples):
+    def _preprocess_dataset(self, examples, image_column="image"):
         """Function for preprocessing the dataset"""
 
         # Images
-        images = [image.convert("RGB") for image in examples["image"]]
+        images = [image.convert("RGB") for image in examples[image_column]]
 
         # Transformations definitions
-        train_resize = transforms.Resize(
-            self.hyperparameters["resolution"],
-            interpolation=transforms.InterpolationMode.BILINEAR,
-        )
-        train_crop = (
-            transforms.CenterCrop(self.hyperparameters["resolution"])
-            if self.hyperparameters["center_crop"]
-            else transforms.RandomCrop(self.hyperparameters["resolution"])
-        )
-        train_flip = transforms.RandomHorizontalFlip(p=1.0)
         train_transforms = transforms.Compose(
             [
+                transforms.Resize(
+                    self.hyperparameters["resolution"],
+                    interpolation=transforms.InterpolationMode.BILINEAR,
+                ),
+                transforms.CenterCrop(self.hyperparameters["resolution"])
+                if self.hyperparameters["center_crop"]
+                else transforms.RandomCrop(self.hyperparameters["resolution"]),
+                transforms.RandomHorizontalFlip()
+                if self.hyperparameters["random_flip"]
+                else transforms.Lambda(lambda x: x),
                 transforms.ToTensor(),
                 transforms.Normalize([0.5], [0.5]),
             ]
         )
 
-        # Image Augmentations
-        original_sizes = []
-        all_images = []
-        crop_top_lefts = []
-        for image in images:
-            original_sizes.append((image.height, image.width))
-            image = train_resize(image)
-            if self.hyperparameters["center_crop"]:
-                y1 = max(
-                    0,
-                    int(
-                        round((image.height - self.hyperparameters["resolution"]) / 2.0)
-                    ),
-                )
-                x1 = max(
-                    0,
-                    int(
-                        round((image.width - self.hyperparameters["resolution"]) / 2.0)
-                    ),
-                )
-                image = train_crop(image)
-            else:
-                y1, x1, h, w = train_crop.get_params(
-                    image,
-                    (
-                        self.hyperparameters["resolution"],
-                        self.hyperparameters["resolution"],
-                    ),
-                )
-                image = crop(image, y1, x1, h, w)
-            if self.hyperparameters["random_flip"] and random.random() < 0.5:
-                # flip
-                x1 = image.width - x1
-                image = train_flip(image)
-            crop_top_left = (y1, x1)
-            crop_top_lefts.append(crop_top_left)
-            image = train_transforms(image)
-            all_images.append(image)
-
-        examples["original_sizes"] = original_sizes
-        examples["crop_top_lefts"] = crop_top_lefts
-        examples["pixel_values"] = all_images
-        tokens_one, tokens_two = self._tokenize_captions(examples)
-        examples["input_ids_one"] = tokens_one
-        examples["input_ids_two"] = tokens_two
+        # Preprocess images
+        examples["pixel_values"] = [train_transforms(image) for image in images]
+        examples["input_ids"] = self._tokenize_captions(examples)
         return examples
 
     def collate_fn(self, examples):
-        self.logger.debug(f"Examples: {examples}")
-        if "pixel_values" in examples[0].keys():
-            image_key = "pixel_values"
-        elif "image" in examples[0].keys():
-            image_key = "image"
-        else:
-            raise ValueError(
-                "Image within DataLoader should be either `pixel_values` or `image`"
-            )
-        pixel_values = torch.stack([example[image_key] for example in examples])
+        pixel_values = torch.stack([example["pixel_values"] for example in examples])
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
         input_ids = torch.stack([example["input_ids"] for example in examples])
         return {"pixel_values": pixel_values, "input_ids": input_ids}
@@ -467,7 +424,7 @@ class LoRATrainer:
             avg_loss = accelerator.gather(
                 loss.repeat(self.hyperparameters["batch_size"])
             ).mean()
-            train_loss += (
+            train_loss = (
                 avg_loss.item() / self.hyperparameters["gradient_accumulation_steps"]
             )
 
@@ -487,7 +444,7 @@ class LoRATrainer:
         if accelerator.sync_gradients:
             progress_bar.update(1)
             global_step += 1
-            accelerator.log({"train_loss": train_loss}, step=global_step)
+            self.logger.info(f"Loss at epoch {global_step}: {train_loss}")
             train_loss = 0.0
 
             if (
@@ -550,8 +507,8 @@ class LoRATrainer:
     def _save_lora_layers(self, accelerator):
         accelerator.wait_for_everyone()
         if accelerator.is_main_process:
-            unet = unet.to(torch.float32)
-            unet.save_attn_procs(self.hyperparameters["output_dir"])
+            self.unet = self.unet.to(torch.float32)
+            self.unet.save_attn_procs(self.hyperparameters["output_dir"])
 
 
 if __name__ == "__main__":
