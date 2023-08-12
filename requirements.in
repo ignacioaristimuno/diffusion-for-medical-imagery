@@ -1,11 +1,13 @@
 accelerate
 datasets
 diffusers
+efficientnet_pytorch
 gradio
 transformers
 Pillow
 pydantic==2.0
 pyyaml
+scitkit-learn
 xformers
 
 --extra-index-url https://download.pytorch.org/whl/cu117

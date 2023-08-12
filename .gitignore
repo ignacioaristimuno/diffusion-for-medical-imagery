@@ -162,6 +162,10 @@ cython_debug/
 # .DS_Store files
 **/.DS_Store
 
+# Model and embedding files
+**/*.pkl
+**/*.bin
+
 # Folders
 models/lora/**
 models/textual_inversion/**
@@ -169,3 +173,4 @@ data/concepts/**/*.jpg
 data/concepts/**/*.jpeg
 data/concepts/**/*.png
 data/output/**
+data/raw/**

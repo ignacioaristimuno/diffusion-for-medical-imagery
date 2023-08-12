@@ -1,6 +1,7 @@
 StableDiffusion:
     model_id: CompVis/stable-diffusion-v1-4
 
+
 TextualInversion:
     model_id: CompVis/stable-diffusion-v1-4
     learning_rate: 0.0005
@@ -13,6 +14,7 @@ TextualInversion:
     mixed_precision: fp16
     seed: 42
     output_dir: data/output/textual_inversion
+
 
 LoRA:
     model_id: CompVis/stable-diffusion-v1-4
@@ -40,3 +42,11 @@ LoRA:
     resolution: 512
     center_crop: false
     random_flip: true
+
+
+Clustering:
+    model_id: efficientnet-b0
+    batch_size: 16
+    epsilon: 0.1
+    min_samples: 5
+    metric: euclidean
