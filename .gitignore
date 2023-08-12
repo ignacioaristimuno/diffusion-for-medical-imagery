@@ -168,3 +168,4 @@ models/textual_inversion/**
 data/concepts/**/*.jpg
 data/concepts/**/*.jpeg
 data/concepts/**/*.png
+data/output/**
