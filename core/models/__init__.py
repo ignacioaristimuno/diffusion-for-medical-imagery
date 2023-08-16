@@ -1,3 +1,4 @@
 from core.models.base_diffusion_model import BaseDiffusionModel
 from core.models.stable_diffusion import StableDiffusionModel
-from core.models.sd_with_textual_inversion import TextualInversionWrapper
+from core.models.textual_inversion_wrapper import TextualInversionWrapper
+from core.models.lora_wrapper import LoRAWrapper

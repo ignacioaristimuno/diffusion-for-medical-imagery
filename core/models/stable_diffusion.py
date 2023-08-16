@@ -51,6 +51,7 @@ class StableDiffusionModel(BaseDiffusionModel):
         with torch.inference_mode():
             images = self.pipe(**configs).images
 
+        images = [img for img in images if self.check_nsfw_image(img)]
         if save:
             base_path = f"{self.BASE_IMAGES_FOLDER}/{self.__class__.__name__}/{label}"
             n_images = len(
@@ -61,3 +62,8 @@ class StableDiffusionModel(BaseDiffusionModel):
                     os.makedirs(base_path)
                 image.save(f"{base_path}/image_{label}_{n_images}.png")
                 n_images += 1
+        return images
+
+    @staticmethod
+    def check_nsfw_image(image):
+        return image.getpixel((1, 1)) == (0, 0, 0)
