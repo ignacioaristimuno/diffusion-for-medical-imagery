@@ -10,6 +10,7 @@ class LoRAWrapper(BaseDiffusionModel):
 
     def __init__(self, concept_name: str) -> None:
         self.configs = get_config("LoRA")
+        self.model_id = self.configs["model_id"]
         self.model_path = self.configs["output_dir"]
         super().__init__(self.__class__.__name__)
         self.concept_name = concept_name
@@ -19,7 +20,7 @@ class LoRAWrapper(BaseDiffusionModel):
 
         # Load previous pipeline
         self.pipe = DiffusionPipeline.from_pretrained(
-            self.model_path,
+            self.model_id,
             torch_dtype=torch.float16,
         ).to(self.device)
 
