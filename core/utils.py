@@ -19,7 +19,7 @@ def download_image(url: str) -> Image:
     return Image.open(BytesIO(response.content)).convert("RGB")
 
 
-def store_images_from_urls(urls: List[str], concept_name: str) -> None:
+def store_images_from_urls(urls: List[str], concept_name: str) -> List[str]:
     """Function for retrieving and storing a list of images from their urls"""
 
     images = list(filter(None, [download_image(url) for url in urls]))
@@ -27,6 +27,7 @@ def store_images_from_urls(urls: List[str], concept_name: str) -> None:
     if not os.path.exists(save_path):
         os.makedirs(save_path, exist_ok=True)
     [image.save(f"{save_path}/{i}.jpeg") for i, image in enumerate(images)]
+    return [f"{save_path}/{i}.jpeg" for i, _ in enumerate(images)]
 
 
 def show_image_grid(images: List[Image.Image], cols: int = 4, rows: int = 4) -> None:

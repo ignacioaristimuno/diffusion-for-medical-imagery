@@ -29,38 +29,6 @@ from core.utils import (
 )
 
 
-# Parameters
-concept_name = "cat_toy"
-what_to_teach = ConceptType.OBJECT  # ["object", "style"]
-placeholder_token = "<cat-toy>"
-initializer_token = "toy"  # A word that can summarise what your new concept is, to be used as a starting point
-
-
-# Store images
-finetuning_images = [
-    "https://huggingface.co/datasets/valhalla/images/resolve/main/2.jpeg",
-    "https://huggingface.co/datasets/valhalla/images/resolve/main/3.jpeg",
-    "https://huggingface.co/datasets/valhalla/images/resolve/main/5.jpeg",
-    "https://huggingface.co/datasets/valhalla/images/resolve/main/6.jpeg",
-]
-
-store_images_from_urls(finetuning_images, concept_name=concept_name)
-
-# Check images
-images = []
-concept_path = f"{CONCEPTS_FOLDER}/{concept_name}"
-for file_path in os.listdir(concept_path):
-    try:
-        image_path = os.path.join(concept_path, file_path)
-        images.append(Image.open(image_path).resize((512, 512)))
-    except Exception:
-        print(
-            f"{image_path} is not a valid image, please make sure to remove this file from the directory otherwise the training could fail."
-        )
-
-show_image_grid(images, 1, len(images))
-
-
 class TextualInversionTrainer:
     """
     Class for handling the finetuning the Stable Diffusion model using
@@ -74,7 +42,7 @@ class TextualInversionTrainer:
     ) -> None:
         self.logger = custom_logger(self.__class__.__name__)
         self.hyperparameters = get_config(key="TextualInversion")
-        self.model_id = get_config(key="StableDiffusion")["model_id"]
+        self.model_id = self.hyperparameters["model_id"]
         self.concept_name = concept_name
         self.initializer_token = initializer_token
         self.placeholder_token = placeholder_token
@@ -403,3 +371,41 @@ class TextualInversionTrainer:
             if param.grad is not None:
                 del param.grad  # Free some memory
             torch.cuda.empty_cache()
+
+
+if __name__ == "__main__":
+    # Parameters
+    concept_name = "cat_toy"
+    what_to_teach = ConceptType.OBJECT  # ["object", "style"]
+    placeholder_token = "<cat-toy>"
+    initializer_token = "toy"  # A word that can summarise what your new concept is, to be used as a starting point
+
+    # Store images
+    finetuning_images = [
+        "https://huggingface.co/datasets/valhalla/images/resolve/main/2.jpeg",
+        "https://huggingface.co/datasets/valhalla/images/resolve/main/3.jpeg",
+        "https://huggingface.co/datasets/valhalla/images/resolve/main/5.jpeg",
+        "https://huggingface.co/datasets/valhalla/images/resolve/main/6.jpeg",
+    ]
+
+    store_images_from_urls(finetuning_images, concept_name=concept_name)
+
+    # Check images
+    images = []
+    concept_path = f"{CONCEPTS_FOLDER}/{concept_name}"
+    for file_path in os.listdir(concept_path):
+        try:
+            image_path = os.path.join(concept_path, file_path)
+            images.append(Image.open(image_path).resize((512, 512)))
+        except Exception:
+            print(
+                f"{image_path} is not a valid image, please make sure to remove this file from the directory otherwise the training could fail."
+            )
+
+    show_image_grid(images, 1, len(images))
+
+    # Finetune
+    trainer = TextualInversionTrainer(
+        concept_name, placeholder_token, initializer_token
+    )
+    trainer.run()
