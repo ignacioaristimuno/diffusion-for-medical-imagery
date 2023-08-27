@@ -1,0 +1,20 @@
+TrainCNN:
+    BatchSize: 8
+    ImagesShape: [224, 224, 3]
+    DataAugmentation:
+        ZoomRange: 0.5
+        RotationRange: 45
+        WidthShiftRange: 0.15
+        HeightShiftRange: 0.15
+        VerticalFlip: true
+        HorizontalFlip: true
+    DoubleFinetuning: false
+    FirstFinetuningLR: 0.00005
+    SecondFinetuningLR: 0.00005
+    FirstFinetuningEpochs: 30
+    SecondFinetuningEpochs: 30
+    CheckpointsFirstFinetuningPath: "models/classification/cnn_first_finetuning/cnn-epoch_{epoch:02d}-cat_acc_{val_categorical_accuracy:.4f}.hdf5"
+    CheckpointsSecondFinetuningPath: "models/classification/cnn_second_finetuning/cnn-epoch_{epoch:02d}-cat_acc_{val_categorical_accuracy:.4f}.hdf5"
+
+ModelInference:
+    BatchSize: 8
