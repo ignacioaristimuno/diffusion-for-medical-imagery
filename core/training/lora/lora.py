@@ -29,8 +29,7 @@ from torchvision.transforms.functional import crop
 from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from core.settings.config import get_config
-from core.settings.logger import custom_logger
+from core.settings import custom_logger, get_config
 from core.utils import CONCEPTS_FOLDER
 
 

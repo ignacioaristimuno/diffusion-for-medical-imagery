@@ -3,7 +3,7 @@ import os
 from PIL import Image
 
 from core.base_objects import ConceptType
-from core.settings.logger import custom_logger
+from core.settings import custom_logger
 from core.utils import (
     show_image_grid,
     store_images_from_urls,

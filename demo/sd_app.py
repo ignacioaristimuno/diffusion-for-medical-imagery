@@ -1,7 +1,7 @@
 import gradio as gr
 
 from core.models import StableDiffusionModel
-from core.settings.config import get_config
+from core.settings import get_config
 
 
 configs = get_config("StableDiffusionModel")

@@ -2,7 +2,7 @@ from diffusers import DPMSolverMultistepScheduler, StableDiffusionPipeline
 import torch
 
 from core.models import BaseDiffusionModel
-from core.settings.config import get_config
+from core.settings import get_config
 
 
 class TextualInversionWrapper(BaseDiffusionModel):
