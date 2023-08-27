@@ -2,7 +2,7 @@ from diffusers import DiffusionPipeline
 import torch
 
 from core.models import BaseDiffusionModel
-from core.settings.config import get_config
+from core.settings import get_config
 
 
 class LoRAWrapper(BaseDiffusionModel):

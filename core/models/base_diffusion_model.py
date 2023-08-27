@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import os
 import torch
 
-from core.settings.logger import custom_logger
+from core.settings import custom_logger
 from core.utils import show_image_grid
 
 

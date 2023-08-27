@@ -18,9 +18,8 @@ from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
 from core.base_objects import ConceptType
-from core.settings.config import get_config
-from core.settings.logger import custom_logger
-from core.training.textual_inversion.dataset import TextualInversionDataset
+from core.settings import custom_logger, get_config
+from core.dataset.datasets import TextualInversionDataset
 from core.utils import (
     load_json,
     show_image_grid,

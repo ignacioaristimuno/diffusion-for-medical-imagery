@@ -7,16 +7,20 @@ with fewer functionalities for the sake of simplicity.
 """
 
 from accelerate import Accelerator
+import bitsandbytes as bnb
 from datasets import load_dataset
 from diffusers import (
     AutoencoderKL,
     DDPMScheduler,
-    DiffusionPipeline,
+    DPMSolverMultistepScheduler,
+    StableDiffusionXLPipeline,
     UNet2DConditionModel,
 )
 from diffusers.loaders import AttnProcsLayers
-from diffusers.models.attention_processor import LoRAAttnProcessor
+from diffusers.models.attention_processor import LoRAAttnProcessor, LoRAAttnProcessor2_0
 from diffusers.optimization import get_scheduler
+from diffusers.utils.import_utils import is_xformers_available
+import gc
 import math
 import numpy as np
 import os
@@ -27,21 +31,27 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.transforms.functional import crop
 from tqdm import tqdm
-from transformers import CLIPTextModel, CLIPTokenizer
+from transformers import (
+    AutoTokenizer,
+    CLIPTextModel,
+    CLIPTextModelWithProjection,
+    PretrainedConfig,
+)
 
+from core.dataset.datasets import SDXLDataset
 from core.settings import custom_logger, get_config
 from core.utils import CONCEPTS_FOLDER
 
 
-class LoRATrainer:
+class StableDiffusionXLLoRATrainer:
     """
-    Class for training the LoRA weights based on the Diffusers library
+    Class for training the LoRA weights of the Stable Diffusion XL model.
     """
 
     def __init__(self, concept_name: str) -> None:
         self.logger = custom_logger(self.__class__.__name__)
         self.concept_name = concept_name
-        self.hyperparameters = get_config(key="LoRA")
+        self.hyperparameters = get_config(key="StableDiffusionXLLoRA")
         self.logger.info(
             f"""Running {self.__class__.__name__} for the concept {concept_name} with hyperparameters: {self.hyperparameters}"""
         )
@@ -52,20 +62,30 @@ class LoRATrainer:
         self.load_models()
 
     def load_models(self):
-        # Scheduler and tokenizer
+        # Noise scheduler
         self.noise_scheduler = DDPMScheduler.from_pretrained(
             self.hyperparameters["model_id"], subfolder="scheduler"
         )
-        self.tokenizer = CLIPTokenizer.from_pretrained(
-            self.hyperparameters["model_id"],
-            subfolder="tokenizer",
+
+        # Load tokenizers
+        self.tokenizer_one = AutoTokenizer.from_pretrained(
+            self.hyperparameters["model_id"], subfolder="tokenizer", use_fast=False
+        )
+        self.tokenizer_two = AutoTokenizer.from_pretrained(
+            self.hyperparameters["model_id"], subfolder="tokenizer_2", use_fast=False
         )
 
-        # Models
-        self.text_encoder = CLIPTextModel.from_pretrained(
-            self.hyperparameters["model_id"],
-            subfolder="text_encoder",
+        # Text encoders
+        self.text_encoder_cls_one = self._get_text_encoder(subfolder="text_encoder")
+        self.text_encoder_cls_two = self._get_text_encoder(subfolder="text_encoder_2")
+        self.text_encoder_one = self.text_encoder_cls_one.from_pretrained(
+            self.hyperparameters["model_id"], subfolder="text_encoder"
         )
+        self.text_encoder_two = self.text_encoder_cls_two.from_pretrained(
+            self.hyperparameters["model_id"], subfolder="text_encoder_2"
+        )
+
+        # Models (VAE + U-Net)
         self.vae = AutoencoderKL.from_pretrained(
             self.hyperparameters["model_id"], subfolder="vae"
         )
@@ -76,7 +96,23 @@ class LoRATrainer:
         # Freeze model parameters
         self.unet.requires_grad_(False)
         self.vae.requires_grad_(False)
-        self.text_encoder.requires_grad_(False)
+        self.text_encoder_one.requires_grad_(False)
+        self.text_encoder_two.requires_grad_(False)
+
+    def _get_text_encoder(self, subfolder: str):
+        """Get the correct text encoder class from the model id"""
+
+        text_encoder_config = PretrainedConfig.from_pretrained(
+            self.hyperparameters["model_id"], subfolder=subfolder
+        )
+        model_class = text_encoder_config.architectures[0]
+
+        if model_class == "CLIPTextModel":
+            return CLIPTextModel
+        elif model_class == "CLIPTextModelWithProjection":
+            return CLIPTextModelWithProjection
+        else:
+            raise ValueError(f"{model_class} is not supported.")
 
     def train(self):
         """Method for initiate the training of LoRA weights"""
@@ -90,13 +126,20 @@ class LoRATrainer:
         )
         weight_dtype = self._set_weights_precision(accelerator)
 
+        # Gradient checkpointing
+        self._set_gradient_checkpointing()
+
         # Set the correct LoRA layers
-        self._set_lora_layers()
-        lora_layers = AttnProcsLayers(self.unet.attn_processors)
+        unet_lora_layers = self._set_lora_layers()
 
         # Optimizer
-        optimizer = torch.optim.AdamW(
-            lora_layers.parameters(),
+        if self.hyperparameters["use_8bit_adam"]:
+            optimizer_class = bnb.optim.AdamW8bit
+        else:
+            optimizer_class = torch.optim.AdamW
+
+        optimizer = optimizer_class(
+            unet_lora_layers.parameters(),
             lr=self.hyperparameters["learning_rate"],
             betas=(
                 self.hyperparameters["adam_beta_1"],
@@ -105,6 +148,34 @@ class LoRATrainer:
             weight_decay=self.hyperparameters["adam_weight_decay"],
             eps=self.hyperparameters["adam_epsilon"],
         )
+
+        # Handle instance prompt
+        instance_time_ids = self._compute_time_ids()
+        add_time_ids = instance_time_ids
+        if not self.hyperparameters["train_text_encoder"]:
+            (
+                instance_prompt_hidden_states,
+                instance_pooled_prompt_embeds,
+            ) = self._compute_text_embeddings(
+                self.hyperparameters["instance_prompt"], accelerator
+            )
+
+        # Clear memory if text encoders are not trained
+        if not self.hyperparameters["train_text_encoder"]:
+            del tokenizers, text_encoders
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        if not self.hyperparameters["train_text_encoder"]:
+            prompt_embeds = instance_prompt_hidden_states
+            unet_add_text_embeds = instance_pooled_prompt_embeds
+        else:
+            tokens_one = self._tokenize_prompt(
+                self.text_encoder_one, self.hyperparameters["instance_prompt"]
+            )
+            tokens_two = self._tokenize_prompt(
+                self.text_encoder_one, self.hyperparameters["instance_prompt"]
+            )
 
         # DataLoader
         train_dataloader = self._load_local_dataset(
@@ -129,12 +200,31 @@ class LoRATrainer:
             * accelerator.num_processes,
             num_training_steps=self.hyperparameters["max_train_steps"]
             * accelerator.num_processes,
+            num_cycles=self.hyperparameters["lr_num_cycles"],
+            power=self.hyperparameters["lr_power"],
         )
 
-        # Prepare everything with our `accelerator`.
-        lora_layers, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-            lora_layers, optimizer, train_dataloader, lr_scheduler
-        )
+        # Prepare everything with our `accelerator`
+        if self.hyperparameters["train_text_encoder"]:
+            (
+                self.unet,
+                self.text_encoder_one,
+                self.text_encoder_two,
+                optimizer,
+                train_dataloader,
+                lr_scheduler,
+            ) = accelerator.prepare(
+                self.unet,
+                self.text_encoder_one,
+                self.text_encoder_two,
+                optimizer,
+                train_dataloader,
+                lr_scheduler,
+            )
+        else:
+            self.unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+                self.unet, optimizer, train_dataloader, lr_scheduler
+            )
 
         # We need to recalculate our total training steps as the size of the training dataloader may have changed.
         num_update_steps_per_epoch = math.ceil(
@@ -161,6 +251,31 @@ class LoRATrainer:
         self._log_training_start(train_dataloader, total_batch_size)
         global_step = 0
         first_epoch = 0
+
+        # Potentially load in the weights and states from a previous save
+        if self.hyperparameters["resume_from_checkpoint"]:
+            # Get the mos recent checkpoint
+            dirs = os.listdir(self.hyperparameters["output_dir"])
+            dirs = [d for d in dirs if d.startswith("checkpoint")]
+            dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
+            path = dirs[-1] if len(dirs) > 0 else None
+
+            accelerator.print(f"Resuming from checkpoint {path}")
+            accelerator.load_state(
+                os.path.join(self.hyperparameters["output_dir"], path)
+            )
+            global_step = int(path.split("-")[1])
+
+            resume_global_step = (
+                global_step * self.hyperparameters["gradient_accumulation_steps"]
+            )
+            first_epoch = global_step // num_update_steps_per_epoch
+            resume_step = resume_global_step % (
+                num_update_steps_per_epoch
+                * self.hyperparameters["gradient_accumulation_steps"]
+            )
+
+        # Progress bar
         progress_bar = tqdm(
             range(global_step, self.hyperparameters["max_train_steps"]),
             disable=not accelerator.is_local_main_process,
@@ -173,8 +288,20 @@ class LoRATrainer:
                 f"Epoch {epoch + 1} of {self.hyperparameters['num_train_epochs']}"
             )
             self.unet.train()
+            if self.hyperparameters["train_text_encoder"]:
+                self.text_encoder_one.train()
+                self.text_encoder_two.train()
             train_loss = 0.0
-            for batch in train_dataloader:
+            for step, batch in enumerate(train_dataloader):
+                if (
+                    self.hyperparameters["resume_from_checkpoint"]
+                    and epoch == first_epoch
+                    and step < resume_step
+                ):
+                    if step % self.hyperparameters["gradient_accumulation_steps"] == 0:
+                        progress_bar.update(1)
+                    continue
+                # ME QUEDÉ POR ACA
                 global_step, step_loss = self._train_one_step(
                     batch,
                     optimizer,
@@ -198,7 +325,8 @@ class LoRATrainer:
     def _set_lora_layers(self):
         """Method for setting the LoRA layers within the U-Net"""
 
-        lora_attn_procs = {}
+        unet_lora_attn_procs = {}
+        unet_lora_parameters = []
         for name in self.unet.attn_processors.keys():
             cross_attention_dim = (
                 None
@@ -216,14 +344,21 @@ class LoRATrainer:
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = self.unet.config.block_out_channels[block_id]
 
-            lora_attn_procs[name] = LoRAAttnProcessor(
+            lora_attn_processor_class = (
+                LoRAAttnProcessor2_0
+                if hasattr(F, "scaled_dot_product_attention")
+                else LoRAAttnProcessor
+            )
+            module = lora_attn_processor_class(
                 hidden_size=hidden_size,
                 cross_attention_dim=cross_attention_dim,
+                rank=self.hyperparameters["rank"],
             )
+            unet_lora_attn_procs[name] = module
+            unet_lora_parameters.extend(module.parameters())
 
-        self.unet.set_attn_processor(lora_attn_procs)
-        if torch.cuda.is_available():
-            self.unet.enable_xformers_memory_efficient_attention()
+        self.unet.set_attn_processor(unet_lora_attn_procs)
+        return unet_lora_parameters
 
     def _set_weights_precision(self, accelerator: Accelerator):
         """Method for setting the weights precision"""
@@ -234,32 +369,44 @@ class LoRATrainer:
         elif accelerator.mixed_precision == "bf16":
             weight_dtype = torch.bfloat16
 
-        # Move U-Net, VAE and Text Encoder to device and cast to weight_dtype
+        # Move U-Net, VAE and the text encoders to device and cast to weight_dtype
         self.unet.to(accelerator.device, dtype=weight_dtype)
         self.vae.to(accelerator.device, dtype=weight_dtype)
-        self.text_encoder.to(accelerator.device, dtype=weight_dtype)
+        self.text_encoder_one.to(accelerator.device, dtype=weight_dtype)
+        self.text_encoder_two.to(accelerator.device, dtype=weight_dtype)
+
+        # Xformers
+        if (
+            is_xformers_available()
+            and self.hyperparameters["enable_xformers_memory_efficient_attention"]
+        ):
+            import xformers
+
+            self.unet.enable_xformers_memory_efficient_attention()
         return weight_dtype
+
+    def _set_gradient_checkpointing(self):
+        if self.hyperparameters["gradient_checkpointing"]:
+            self.unet.enable_gradient_checkpointing()
+            if self.hyperparameters["train_text_encoder"]:
+                self.text_encoder_one.gradient_checkpointing_enable()
+                self.text_encoder_two.gradient_checkpointing_enable()
 
     def _load_local_dataset(
         self, data_dir: str, accelerator: Accelerator
     ) -> DataLoader:
         """Function for loading the concept's dataset from the data directory"""
 
+        # Create dataset
         self.logger.info(f"Loading dataset from {data_dir}")
-        data_files = {"train": os.path.join(data_dir, "**")}
-        train_dataset = load_dataset(
-            "imagefolder",
-            data_files=data_files,
+        train_dataset = SDXLDataset(
+            instance_data_root=self.hyperparameters["instance_data_dir"],
+            class_num=self.hyperparameters["n_class_images"],
+            size=self.hyperparameters["resolution"],
+            center_crop=self.hyperparameters["center_crop"],
         )
 
-        # Preprocess dataset
-        self.logger.info("Preprocessing dataset...")
-        with accelerator.main_process_first():
-            train_dataset = train_dataset["train"].with_transform(
-                self._preprocess_dataset
-            )
-
-        # DataLoaders creation:
+        # Wrap dataset within DataLoader
         self.logger.info(
             f"Loading dataset in DataLoader with batch size of {self.hyperparameters['batch_size']}"
         )
@@ -322,6 +469,71 @@ class LoRATrainer:
         examples["pixel_values"] = [train_transforms(image) for image in images]
         examples["input_ids"] = self._tokenize_captions(examples)
         return examples
+
+    def _compute_time_ids(self, accelerator, weight_dtype):
+        # Adapted from pipeline.StableDiffusionXLPipeline._get_add_time_ids
+        original_size = (
+            self.hyperparameters["resolution"],
+            self.hyperparameters["resolution"],
+        )
+        target_size = (
+            self.hyperparameters["resolution"],
+            self.hyperparameters["resolution"],
+        )
+        crops_coords_top_left = (
+            self.hyperparameters["crops_coords_top_left_h"],
+            self.hyperparameters["crops_coords_top_left_w"],
+        )
+        add_time_ids = list(original_size + crops_coords_top_left + target_size)
+        add_time_ids = torch.tensor([add_time_ids])
+        add_time_ids = add_time_ids.to(accelerator.device, dtype=weight_dtype)
+        return add_time_ids
+
+    def _tokenize_prompt(self, tokenizer, prompt):
+        text_inputs = tokenizer(
+            prompt,
+            padding="max_length",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+            return_tensors="pt",
+        )
+        text_input_ids = text_inputs.input_ids
+        return text_input_ids
+
+    def _encode_prompt(self, prompt, text_input_ids_list=None):
+        tokenizers = [self.tokenizer_one, self.tokenizer_two]
+        text_encoders = [self.text_encoder_one, self.text_encoder_two]
+        prompt_embeds_list = []
+        for i, text_encoder in enumerate(text_encoders):
+            if tokenizers is not None:
+                tokenizer = tokenizers[i]
+                text_input_ids = self._tokenize_prompt(tokenizer, prompt)
+            else:
+                assert text_input_ids_list is not None
+                text_input_ids = text_input_ids_list[i]
+
+            prompt_embeds = text_encoder(
+                text_input_ids.to(text_encoder.device),
+                output_hidden_states=True,
+            )
+
+            # We are only ALWAYS interested in the pooled output of the final text encoder
+            pooled_prompt_embeds = prompt_embeds[0]
+            prompt_embeds = prompt_embeds.hidden_states[-2]
+            bs_embed, seq_len, _ = prompt_embeds.shape
+            prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
+            prompt_embeds_list.append(prompt_embeds)
+
+        prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
+        pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
+        return prompt_embeds, pooled_prompt_embeds
+
+    def _compute_text_embeddings(self, accelerator, prompt):
+        with torch.no_grad():
+            prompt_embeds, pooled_prompt_embeds = self._encode_prompt(prompt)
+            prompt_embeds = prompt_embeds.to(accelerator.device)
+            pooled_prompt_embeds = pooled_prompt_embeds.to(accelerator.device)
+        return prompt_embeds, pooled_prompt_embeds
 
     def collate_fn(self, examples):
         pixel_values = torch.stack([example["pixel_values"] for example in examples])
