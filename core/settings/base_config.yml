@@ -1,2 +1,14 @@
 StableDiffusion:
-  model_id: CompVis/stable-diffusion-v1-4
+    model_id: CompVis/stable-diffusion-v1-4
+
+TextualInversion:
+    learning_rate: 0.0005
+    scale_lr: true
+    max_train_steps: 2000
+    save_steps: 250
+    batch_size: 4
+    gradient_accumulation_steps: 1
+    gradient_checkpointing: true
+    mixed_precision: fp16
+    seed: 42
+    output_dir: data/output/textual_inversion
