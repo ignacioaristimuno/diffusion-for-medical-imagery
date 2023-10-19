@@ -1,12 +1,11 @@
 import json
+import numpy as np
 import os
 import shutil
 import sys
 from typing import Any, Dict, List
 from tensorflow.keras.models import Model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-
-# from tensorflow.keras.applications.efficientnet import preprocess_input
 from tensorflow.keras.applications.mobilenet import preprocess_input
 
 sys.path.append(os.getcwd())
@@ -45,6 +44,7 @@ class SkinLesionCNNTrainer:
 
     def __init__(
         self,
+        n_classes: int,
         images_shape: List[int],
         batch_size: int,
         double_finetuning: bool,
@@ -58,6 +58,7 @@ class SkinLesionCNNTrainer:
         self.logger = custom_logger(self.__class__.__name__)
 
         # Configs
+        self.n_classes = n_classes
         self.images_shape = images_shape
         self.batch_size = batch_size
         self.double_finetuning = double_finetuning
@@ -68,14 +69,14 @@ class SkinLesionCNNTrainer:
         self.width_shift_range = width_shift_range
         self.height_shift_range = height_shift_range
 
-    def train(self, first_folder: str, second_folder: str) -> None:
+    def train(self, first_folder: str, second_folder: str, save_folder: str) -> None:
         """Function for training the CNN model for skin lesion classification"""
 
         # Remove previous models and metrics
-        if os.path.exists(BASE_MODELS_FOLDER):
-            shutil.rmtree(BASE_MODELS_FOLDER)
-        if os.path.exists(BASE_METRICS_FLODER):
-            shutil.rmtree(BASE_METRICS_FLODER)
+        if os.path.exists(f"{BASE_MODELS_FOLDER}/{save_folder}"):
+            shutil.rmtree(f"{BASE_MODELS_FOLDER}/{save_folder}")
+        if os.path.exists(f"{BASE_METRICS_FLODER}/{save_folder}"):
+            shutil.rmtree(f"{BASE_METRICS_FLODER}/{save_folder}")
 
         # Data Loaders
         first_train_dataloader = None
@@ -85,19 +86,21 @@ class SkinLesionCNNTrainer:
             first_val_dataloader = self._get_val_dataloader(folder=first_folder)
         second_train_dataloader = self._get_train_dataloader(folder=second_folder)
         second_val_dataloader = self._get_val_dataloader(folder=second_folder)
+        test_dataloader = self._get_test_dataloader(folder=second_folder)
 
         # Training
-        skin_lesion_cnn = SkinLesionCNN(**get_cnn_settings())
+        skin_lesion_cnn = SkinLesionCNN(**get_cnn_settings(), n_classes=self.n_classes)
         model, metrics = skin_lesion_cnn.train_model(
             first_train_dataloader,
             first_val_dataloader,
             second_train_dataloader,
             second_val_dataloader,
+            test_dataloader,
         )
 
         # Save artifacts
-        self._save_model(model)
-        self._save_metrics(metrics)
+        self._save_model(model, save_folder)
+        self._save_metrics(metrics, save_folder)
 
     def _get_train_dataloader(self, folder: str):
         self.logger.info("Fetching Train DataLoader...")
@@ -137,24 +140,44 @@ class SkinLesionCNNTrainer:
         self.logger.info(f"Validation indices: {val_data_gen.class_indices}")
         return val_data_gen
 
-    def _save_model(self, model: Model):
+    def _get_test_dataloader(self, folder: str, shuffle: bool = True):
+        self.logger.info("Fetching Test DataLoader...")
+        test_image_dataloader = ImageDataGenerator(
+            preprocessing_function=preprocess_input
+        )
+        test_data_gen = test_image_dataloader.flow_from_directory(
+            batch_size=self.batch_size,
+            directory=f"{BASE_IMAGES_FOLDER}/{folder}/test",
+            shuffle=shuffle,
+            target_size=(self.images_shape[0], self.images_shape[1]),
+            class_mode="categorical",
+            interpolation="bilinear",
+        )
+        self.logger.info(f"Test indices: {test_data_gen.class_indices}")
+        return test_data_gen
+
+    def _save_model(self, model: Model, save_folder: str):
         self.logger.info("Saving model...")
-        model_path = f"{BASE_MODELS_FOLDER}/cnn_model_original.h5"
+        model_path = f"{BASE_MODELS_FOLDER}/{save_folder}/cnn_model_original.h5"
         model.save(model_path)
         self.logger.info(f"Model saved at path {model_path}!")
 
-    def _save_metrics(self, metrics: Dict[str, Any]):
+    def _save_metrics(self, metrics: Dict[str, Any], save_folder: str):
         self.logger.info("Saving metrics...")
-        if not os.path.exists(BASE_METRICS_FLODER):
-            os.makedirs(BASE_METRICS_FLODER)
-        metrics_path = f"{BASE_METRICS_FLODER}/cnn_model_metrics.json"
+        if not os.path.exists(f"{BASE_METRICS_FLODER}/{save_folder}"):
+            os.makedirs(f"{BASE_METRICS_FLODER}/{save_folder}")
+        metrics_path = f"{BASE_METRICS_FLODER}/{save_folder}/cnn_model_metrics.json"
         with open(metrics_path, "w") as f:
             json.dump(metrics, f)
         self.logger.info(f"Metrics saved at path {metrics_path}!")
 
 
 if __name__ == "__main__":
-    first_folder = None
-    second_folder = "baseline"
-    trainer = SkinLesionCNNTrainer(**get_training_settings())
-    trainer.train(first_folder=first_folder, second_folder=second_folder)
+    first_folder = "baseline"  # "mix_60_original_40_generated"
+    second_folder = "augmentation"
+    save_folder = "augmentation"
+    n_classes = 5
+    trainer = SkinLesionCNNTrainer(**get_training_settings(), n_classes=n_classes)
+    trainer.train(
+        first_folder=first_folder, second_folder=second_folder, save_folder=save_folder
+    )

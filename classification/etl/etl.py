@@ -33,16 +33,16 @@ class ClassificationETL:
             "pigmented_bowens": "akiec",
         }
 
-    def run(self) -> None:
+    def run(self, raw_folder: str) -> None:
         """Run the ETL process for classification models"""
 
         random.seed(42)
         self.logger.info("Starting ETL process...")
-        min_images = self._get_min_images_in_dataset()
-        self._copy_images_to_training_folders(min_images)
+        min_images = self._get_min_images_in_dataset(raw_folder)
+        self._copy_images_to_training_folders(min_images, raw_folder)
         self.logger.info("ETL process completed!")
 
-    def prepare_raw_data(self) -> None:
+    def prepare_raw_data(self, raw_folder: str) -> None:
         """Prepare the raw data for the classification models"""
 
         # Read metadata csv
@@ -50,16 +50,16 @@ class ClassificationETL:
 
         # Folder structure
         self.logger.info("Creating raw folders...")
-        os.makedirs(f"{self.BASE_IMAGES_FOLDERS}/raw")
+        os.makedirs(f"{self.BASE_IMAGES_FOLDERS}/{raw_folder}")
         for label in self.class_labels:
-            os.makedirs(f"{self.BASE_IMAGES_FOLDERS}/raw/{label}")
+            os.makedirs(f"{self.BASE_IMAGES_FOLDERS}/{raw_folder}/{label}")
 
             df_label = df[df["dx"] == self.labels_dict[label]]
             self.logger.info(f"{df_label.shape[0]}, {df_label.shape[1]}")
             for image_id in df_label["image_id"].to_list():
                 shutil.copy(
                     self._get_image_path(image_id),
-                    f"{self.BASE_IMAGES_FOLDERS}/raw/{label}/{image_id}.jpg",
+                    f"{self.BASE_IMAGES_FOLDERS}/{raw_folder}/{label}/{image_id}.jpg",
                 )
 
         self.logger.info("Raw data prepared!")
@@ -72,17 +72,17 @@ class ClassificationETL:
         else:
             return f"../dataset/HAM10000_images_part_1/{image_id}.jpg"
 
-    def _get_min_images_in_dataset(self):
+    def _get_min_images_in_dataset(self, raw_folder: str):
         """Get the minimum number of images in the dataset"""
 
         min_images = 0
-        for label in os.listdir(f"{self.BASE_IMAGES_FOLDERS}/raw"):
+        for label in os.listdir(f"{self.BASE_IMAGES_FOLDERS}/{raw_folder}"):
             if not label.startswith("."):
                 images_count = len(
                     [
                         file
                         for file in os.listdir(
-                            f"{self.BASE_IMAGES_FOLDERS}/raw/{label}"
+                            f"{self.BASE_IMAGES_FOLDERS}/{raw_folder}/{label}"
                         )
                         if file.endswith(".jpg")
                         or file.endswith(".png")
@@ -96,15 +96,19 @@ class ClassificationETL:
         self.logger.info(f"Mimimum number of images per class in dataset: {min_images}")
         return min_images
 
-    def _copy_images_to_training_folders(self, min_images: int) -> None:
+    def _copy_images_to_training_folders(
+        self, min_images: int, raw_folder: str
+    ) -> None:
         """Copy the images to the training folders"""
 
         self.logger.info("Copying images to training folders...")
-        for label in os.listdir(f"{self.BASE_IMAGES_FOLDERS}/raw"):
+        for label in os.listdir(f"{self.BASE_IMAGES_FOLDERS}/{raw_folder}"):
             if not label.startswith("."):
                 images = [
                     file
-                    for file in os.listdir(f"{self.BASE_IMAGES_FOLDERS}/raw/{label}")
+                    for file in os.listdir(
+                        f"{self.BASE_IMAGES_FOLDERS}/{raw_folder}/{label}"
+                    )
                     if file.endswith(".jpg")
                     or file.endswith(".png")
                     or file.endswith(".jpeg")
@@ -114,11 +118,17 @@ class ClassificationETL:
                 )
 
                 # Train, val, test split
+                print(images[-10:-3])
                 test_images = random.sample(
-                    images, math.ceil(len(images) * self.test_size)
+                    [img for img in images if img.startswith("ISIC")],
+                    math.ceil(len(images) * self.test_size),
                 )
                 val_images = random.sample(
-                    [img for img in images if img not in test_images],
+                    [
+                        img
+                        for img in images
+                        if img.startswith("ISIC") and (img not in test_images)
+                    ],
                     math.ceil(len(images) * self.val_size),
                 )
                 train_images = [
@@ -128,10 +138,16 @@ class ClassificationETL:
                 ]
 
                 # Copy test images
+                if os.path.exists(
+                    f"{self.BASE_IMAGES_FOLDERS}/{self.folder}/test/{label}"
+                ):
+                    shutil.rmtree(
+                        f"{self.BASE_IMAGES_FOLDERS}/{self.folder}/test/{label}"
+                    )
                 os.makedirs(f"{self.BASE_IMAGES_FOLDERS}/{self.folder}/test/{label}")
                 for image in test_images:
                     shutil.copy(
-                        f"{self.BASE_IMAGES_FOLDERS}/raw/{label}/{image}",
+                        f"{self.BASE_IMAGES_FOLDERS}/{raw_folder}/{label}/{image}",
                         f"{self.BASE_IMAGES_FOLDERS}/{self.folder}/test/{label}/{image}",
                     )
                 self.logger.info(
@@ -139,10 +155,16 @@ class ClassificationETL:
                 )
 
                 # Copy validation images
+                if os.path.exists(
+                    f"{self.BASE_IMAGES_FOLDERS}/{self.folder}/val/{label}"
+                ):
+                    shutil.rmtree(
+                        f"{self.BASE_IMAGES_FOLDERS}/{self.folder}/val/{label}"
+                    )
                 os.makedirs(f"{self.BASE_IMAGES_FOLDERS}/{self.folder}/val/{label}")
                 for image in val_images:
                     shutil.copy(
-                        f"{self.BASE_IMAGES_FOLDERS}/raw/{label}/{image}",
+                        f"{self.BASE_IMAGES_FOLDERS}/{raw_folder}/{label}/{image}",
                         f"{self.BASE_IMAGES_FOLDERS}/{self.folder}/val/{label}/{image}",
                     )
                 self.logger.info(
@@ -150,10 +172,16 @@ class ClassificationETL:
                 )
 
                 # Copy training images
+                if os.path.exists(
+                    f"{self.BASE_IMAGES_FOLDERS}/{self.folder}/train/{label}"
+                ):
+                    shutil.rmtree(
+                        f"{self.BASE_IMAGES_FOLDERS}/{self.folder}/train/{label}"
+                    )
                 os.makedirs(f"{self.BASE_IMAGES_FOLDERS}/{self.folder}/train/{label}")
                 for image in train_images:
                     shutil.copy(
-                        f"{self.BASE_IMAGES_FOLDERS}/raw/{label}/{image}",
+                        f"{self.BASE_IMAGES_FOLDERS}/{raw_folder}/{label}/{image}",
                         f"{self.BASE_IMAGES_FOLDERS}/{self.folder}/train/{label}/{image}",
                     )
                 self.logger.info(
@@ -164,13 +192,20 @@ class ClassificationETL:
 
 
 if __name__ == "__main__":
-    folder = "baseline"
-    class_labels = ["dermatofibroma", "melanoma", "vascular"]
+    raw_folder = "raw"
+    folder = "baseline"  # "mix_54p_raw_46p_generated"
+    class_labels = [
+        "basal_cell_carcinoma",
+        "dermatofibroma",
+        "melanoma",
+        "pigmented_benign_keratosis",
+        "vascular",
+    ]
     test_size = 0.25
     val_size = 0.2
     etl = ClassificationETL(
         folder=folder, class_labels=class_labels, test_size=test_size, val_size=val_size
     )
-    if not os.path.exists("data/classification/raw"):
-        etl.prepare_raw_data()
-    etl.run()
+    if not os.path.exists(f"data/classification/{raw_folder}"):
+        etl.prepare_raw_data(raw_folder)
+    etl.run(raw_folder)

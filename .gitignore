@@ -167,7 +167,7 @@ models/lora/**
 models/textual_inversion/**
 models/classification/**
 metrics/classification/**
-data/classification/**/*.jpg
+data/classification/**
 data/concepts/**/*.jpg
 data/concepts/**/*.jpeg
 data/concepts/**/*.png

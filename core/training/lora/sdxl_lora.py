@@ -44,9 +44,7 @@ from core.utils import CONCEPTS_FOLDER
 
 
 class StableDiffusionXLLoRATrainer:
-    """
-    Class for training the LoRA weights of the Stable Diffusion XL model.
-    """
+    """Class for training the LoRA weights of the Stable Diffusion XL model."""
 
     def __init__(self, concept_name: str) -> None:
         self.logger = custom_logger(self.__class__.__name__)
@@ -87,13 +85,13 @@ class StableDiffusionXLLoRATrainer:
 
         # Models (VAE + U-Net)
         self.vae = AutoencoderKL.from_pretrained(
-            self.hyperparameters["model_id"], subfolder="vae"
+            self.hyperparameters["vae_model_id"], subfolder="vae"
         )
         self.unet = UNet2DConditionModel.from_pretrained(
             self.hyperparameters["model_id"], subfolder="unet"
         )
 
-        # Freeze model parameters
+        # Freeze models parameters
         self.unet.requires_grad_(False)
         self.vae.requires_grad_(False)
         self.text_encoder_one.requires_grad_(False)

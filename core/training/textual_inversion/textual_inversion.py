@@ -3,7 +3,6 @@ from accelerate import Accelerator
 from diffusers import (
     AutoencoderKL,
     DDPMScheduler,
-    PNDMScheduler,
     StableDiffusionPipeline,
     UNet2DConditionModel,
 )
@@ -30,8 +29,8 @@ from core.utils import (
 
 class TextualInversionTrainer:
     """
-    Class for handling the finetuning the Stable Diffusion model using
-    Textual Inversion for teaching the model a specific concept.
+    Class for handling the finetuning the Stable Diffusion model using Textual Inversion
+    for teaching the model a specific concept.
 
     https://colab.research.google.com/github/huggingface/notebooks/blob/main/diffusers/sd_textual_inversion_training.ipynb
     """
@@ -47,7 +46,6 @@ class TextualInversionTrainer:
         self.placeholder_token = placeholder_token
 
         os.makedirs(self.hyperparameters["output_dir"], exist_ok=True)
-
         self.images_folder = f"{CONCEPTS_FOLDER}/{concept_name}"
         self.prompt_templates = load_json(
             "core/training/textual_inversion/prompt_templates.json"
@@ -55,6 +53,7 @@ class TextualInversionTrainer:
         self._initialize_tokenizer()
         self._get_special_tokens(initializer_token)
         self._load_diffusion_model()
+        self._freeze_models()
 
     def _initialize_tokenizer(self) -> None:
         self.tokenizer = CLIPTokenizer.from_pretrained(
