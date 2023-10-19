@@ -1,10 +1,8 @@
 import numpy as np
 import os
+from sklearn.metrics import accuracy_score
 from typing import Any, Dict, List, Tuple
-
 import tensorflow as tf
-
-# from tensorflow.keras.applications import EfficientNetB0
 from tensorflow.keras.applications import MobileNet
 from tensorflow.keras.callbacks import ModelCheckpoint
 from tensorflow.keras.models import Model
@@ -53,6 +51,7 @@ class SkinLesionCNN:
 
     def __init__(
         self,
+        n_classes: int,
         images_shape: List[int],
         batch_size: int,
         double_finetuning: bool,
@@ -66,6 +65,7 @@ class SkinLesionCNN:
         self.logger = custom_logger(self.__class__.__name__)
 
         # Configs
+        self.n_classes = n_classes
         self.batch_size = batch_size
         self.images_shape = images_shape
         self.double_finetuning = double_finetuning
@@ -90,6 +90,7 @@ class SkinLesionCNN:
         first_val_data_gen: ImageDataGenerator,
         second_train_data_gen: ImageDataGenerator,
         second_val_data_gen: ImageDataGenerator,
+        test_data_gen: ImageDataGenerator,
     ) -> Tuple[Model, Dict[str, Any]]:
         """Method for training the CNN in two steps: a pretraining and a finetuning"""
 
@@ -111,9 +112,9 @@ class SkinLesionCNN:
         )
 
         # Build metrics dictionary
-        metrics = {
-            "second_finetuning_metrics": second_finetuning_metrics,
-        }
+        metrics = {"second_finetuning_metrics": second_finetuning_metrics}
+        test_metrics = self.evaluate(model, test_data_gen)
+        metrics.update(test_metrics)
         if self.double_finetuning:
             metrics["first_finetuning_metrics"] = first_finetuning_metrics
         return model, metrics
@@ -139,7 +140,7 @@ class SkinLesionCNN:
         x = BatchNormalization()(x)
         x = Dropout(0.15)(x)
 
-        out = Dense(3)(x)
+        out = Dense(self.n_classes)(x)
         model = Model(inputs=inputs, outputs=out)
         return model
 
@@ -212,6 +213,19 @@ class SkinLesionCNN:
         )
         return metrics
 
+    def evaluate(
+        self, model: Model, test_data_gen: ImageDataGenerator
+    ) -> Dict[str, Any]:
+        """Evaluate the model on a test set and return evaluation metrics"""
+
+        self.logger.info("Evaluating model on test set...")
+        evaluation_metrics = model.evaluate(test_data_gen)
+        metrics = {
+            "test_loss": evaluation_metrics[0],
+            "test_categorical_accuracy": evaluation_metrics[1],
+        }
+        return metrics
+
     def _load_best_checkpoint(
         self, model, val_data_gen: ImageDataGenerator, step: str
     ) -> None:
@@ -230,7 +244,7 @@ class SkinLesionCNN:
                 continue
             checkpoint_acc = float(checkpoint[-11:-5])
             if checkpoint_acc > best_acc:
-                best_loss = checkpoint_acc
+                best_acc = checkpoint_acc
                 best_checkpoint = checkpoint
 
         model.load_weights(f"{checkpoints_path}/{best_checkpoint}")

@@ -34,9 +34,7 @@ from core.utils import CONCEPTS_FOLDER
 
 
 class LoRATrainer:
-    """
-    Class for training the LoRA weights based on the Diffusers library
-    """
+    """Class for training the LoRA weights based on the Diffusers library"""
 
     def __init__(self, concept_name: str) -> None:
         self.logger = custom_logger(self.__class__.__name__)
